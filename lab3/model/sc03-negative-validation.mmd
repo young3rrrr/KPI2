@@ -12,19 +12,23 @@ sequenceDiagram
     DealController->>DealService: confirmDealContract(deal_id, items)
     activate DealService
 
-    alt Порожня угода — список товарних позицій DealItem порожній (items.isEmpty())
+    break Список товарних позицій порожній (items.isEmpty() == true)
         Note over DealService,DealRepository: Запис у DealRepository не відбувається, Deal залишається в status='new'
-        DealService-->>DealController: return 400 Bad Request ("Угода не містить жодної позиції DealItem")
-        DealController-->>SalesManager: return 400 Bad Request ("Угода не може перейти в статус contract без товарів")
-    else Додано неактивний товар (Product.is_active == false)
+        DealService-->>DealController: return EmptyDealItemsError("Угода не містить жодної позиції DealItem")
+        DealController-->>SalesManager: return 400 Bad Request (EmptyDealItemsError: "Угода не може перейти в статус contract без товарів")
+    end
+
+    loop Для кожної позиції item (product_id, quantity) зі списку items
         DealService->>ProductRepository: findById(product_id)
         activate ProductRepository
         ProductRepository-->>DealService: return Product(id=product_id, base_price, is_active=false)
         deactivate ProductRepository
 
-        Note over DealService,DealRepository: Product.is_active == false — збереження DealItem(deal_id, product_id, quantity, actual_price)<br/>та оновлення Deal(status='new', total_amount) у DealRepository скасовано
-        DealService-->>DealController: return 400 Bad Request ("Товар product_id є неактивним: Product.is_active = false")
-        DealController-->>SalesManager: return 400 Bad Request ("Неможливо додати неактивний товар до угоди")
+        break Товар неактивний (Product.is_active == false)
+            Note over DealService,DealRepository: Product.is_active == false — збереження DealItem(deal_id, product_id, quantity, actual_price)<br/>та оновлення Deal(status='new', total_amount) у DealRepository скасовано
+            DealService-->>DealController: return InactiveProductError("Товар product_id є неактивним: Product.is_active = false")
+            DealController-->>SalesManager: return 400 Bad Request (InactiveProductError: "Неможливо додати неактивний товар до угоди")
+        end
     end
 
     deactivate DealService

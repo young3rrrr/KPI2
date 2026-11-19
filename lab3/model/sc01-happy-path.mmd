@@ -3,9 +3,9 @@ sequenceDiagram
     actor SalesManager as Менеджер з продажу (SalesManager)
     participant DealController as Контролер угод (DealController)
     participant DealService as Сервіс угод (DealService)
+    participant DealRepository as Репозиторій угод (DealRepository)
     participant ProductRepository as Репозиторій товарів (ProductRepository)
     participant PricingService as Сервіс розрахунку цін (PricingService)
-    participant DealRepository as Репозиторій угод (DealRepository)
     participant EmailService as Поштовий сервіс (EmailService)
 
     SalesManager->>DealController: POST /deals/{deal_id}/confirm (items: [{product_id, quantity: 2}, {product_id, quantity: 1}])
@@ -13,6 +13,12 @@ sequenceDiagram
 
     DealController->>DealService: confirmDealContract(deal_id, items)
     activate DealService
+
+    DealService->>DealRepository: findById(deal_id)
+    activate DealRepository
+    DealRepository-->>DealService: return Deal(id=deal_id, client_id, status='negotiation', total_amount=0)
+    deactivate DealRepository
+    Note over DealService: Перевірка статусу угоди: Deal.status != 'won' та Deal.status != 'lost'
 
     loop Для кожної позиції item (product_id, quantity) зі списку items
         DealService->>ProductRepository: findById(product_id)
@@ -37,10 +43,12 @@ sequenceDiagram
     DealRepository-->>DealService: return Deal(id=deal_id, client_id, status='contract', total_amount=5000)
     deactivate DealRepository
 
-    DealService->>EmailService: sendContractNotification(client_id, deal_id)
-    activate EmailService
-    EmailService-->>DealService: return notificationSent = true
-    deactivate EmailService
+    opt Відправка повідомлення клієнту про сформований договір
+        DealService-)EmailService: sendContractNotification(client_id, deal_id)
+        activate EmailService
+        Note over EmailService: Асинхронна відправка листа без очікування відповіді
+        deactivate EmailService
+    end
 
     DealService-->>DealController: return Deal(id=deal_id, status='contract', total_amount=5000)
     deactivate DealService

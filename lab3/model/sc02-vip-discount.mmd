@@ -17,11 +17,21 @@ sequenceDiagram
     DealRepository-->>DealService: return Deal(id=deal_id, client_id, status='negotiation', total_amount=10000)
     deactivate DealRepository
 
-    alt Ліміт знижки для VIP-клієнта в нормі (discount_percent <= 15)
-        DealService->>PricingService: calculateDiscountedTotal(total_amount=10000, discount_percent=10)
+    DealService->>DealRepository: findItemsByDealId(deal_id)
+    activate DealRepository
+    DealRepository-->>DealService: return DealItem[] (deal_id, product_id, quantity, actual_price)
+    deactivate DealRepository
+
+    alt Умова VIP-угоди та ліміт знижки в нормі (total_amount >= 10000 і discount_percent <= 15)
+        DealService->>PricingService: applyDiscountToItems(items: DealItem[], discount_percent=10)
         activate PricingService
-        PricingService-->>DealService: return total_amount = 9000
+        PricingService-->>DealService: return {items: DealItem[] (updated actual_price), total_amount: 9000}
         deactivate PricingService
+
+        DealService->>DealRepository: updateDealItems(deal_id, items: DealItem[])
+        activate DealRepository
+        DealRepository-->>DealService: return DealItem[] (deal_id, product_id, quantity, actual_price)
+        deactivate DealRepository
 
         DealService->>DealRepository: updateDealTotal(deal_id, total_amount=9000)
         activate DealRepository
@@ -31,9 +41,9 @@ sequenceDiagram
         DealService-->>DealController: return Deal(id=deal_id, status='negotiation', total_amount=9000)
         DealController-->>SalesManager: return 200 OK (Deal: deal_id, status='negotiation', total_amount=9000)
     else Перевищено ліміт знижки (discount_percent > 15)
-        Note over DealService,DealRepository: Оновлення Deal.total_amount у DealRepository відхилено
-        DealService-->>DealController: return ValidationError("400 Bad Request: Знижка перевищує ліміт 15%")
-        DealController-->>SalesManager: return 400 Bad Request ("Перевищено максимальний ліміт знижки 15% для VIP-клієнта")
+        Note over DealService,DealRepository: Оновлення DealItem.actual_price та Deal.total_amount у DealRepository відхилено
+        DealService-->>DealController: return ValidationError("Знижка перевищує максимальний ліміт 15% для VIP-клієнта")
+        DealController-->>SalesManager: return 400 Bad Request (ValidationError: "Перевищено максимальний ліміт знижки 15%")
     end
 
     deactivate DealService
