@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    actor SalesManager as Менеджер з продажу (SalesManager)
+    participant DealController as Контролер угод (DealController)
+    participant DealService as Сервіс угод (DealService)
+    participant DealRepository as Репозиторій угод (DealRepository)
+    participant PricingService as Сервіс розрахунку цін (PricingService)
+
+    SalesManager->>DealController: PATCH /deals/{deal_id}/discount (discount_percent=10)
+    activate DealController
+
+    DealController->>DealService: applyDiscount(deal_id, discount_percent=10)
+    activate DealService
+
+    DealService->>DealRepository: findById(deal_id)
+    activate DealRepository
+    DealRepository-->>DealService: return Deal(id=deal_id, client_id, status='negotiation', total_amount=10000)
+    deactivate DealRepository
+
+    alt Ліміт знижки для VIP-клієнта в нормі (discount_percent <= 15)
+        DealService->>PricingService: calculateDiscountedTotal(total_amount=10000, discount_percent=10)
+        activate PricingService
+        PricingService-->>DealService: return total_amount = 9000
+        deactivate PricingService
+
+        DealService->>DealRepository: updateDealTotal(deal_id, total_amount=9000)
+        activate DealRepository
+        DealRepository-->>DealService: return Deal(id=deal_id, status='negotiation', total_amount=9000)
+        deactivate DealRepository
+
+        DealService-->>DealController: return Deal(id=deal_id, status='negotiation', total_amount=9000)
+        DealController-->>SalesManager: return 200 OK (Deal: deal_id, status='negotiation', total_amount=9000)
+    else Перевищено ліміт знижки (discount_percent > 15)
+        Note over DealService,DealRepository: Оновлення Deal.total_amount у DealRepository відхилено
+        DealService-->>DealController: return ValidationError("400 Bad Request: Знижка перевищує ліміт 15%")
+        DealController-->>SalesManager: return 400 Bad Request ("Перевищено максимальний ліміт знижки 15% для VIP-клієнта")
+    end
+
+    deactivate DealService
+    deactivate DealController

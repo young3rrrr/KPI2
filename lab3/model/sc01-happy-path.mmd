@@ -1,0 +1,49 @@
+sequenceDiagram
+    autonumber
+    actor SalesManager as Менеджер з продажу (SalesManager)
+    participant DealController as Контролер угод (DealController)
+    participant DealService as Сервіс угод (DealService)
+    participant ProductRepository as Репозиторій товарів (ProductRepository)
+    participant PricingService as Сервіс розрахунку цін (PricingService)
+    participant DealRepository as Репозиторій угод (DealRepository)
+    participant EmailService as Поштовий сервіс (EmailService)
+
+    SalesManager->>DealController: POST /deals/{deal_id}/confirm (items: [{product_id, quantity: 2}, {product_id, quantity: 1}])
+    activate DealController
+
+    DealController->>DealService: confirmDealContract(deal_id, items)
+    activate DealService
+
+    loop Для кожної позиції item (product_id, quantity) зі списку items
+        DealService->>ProductRepository: findById(product_id)
+        activate ProductRepository
+        ProductRepository-->>DealService: return Product(id=product_id, base_price, is_active=true)
+        deactivate ProductRepository
+        Note over DealService: Перевірка Product.is_active == true та створення DealItem(deal_id, product_id, quantity, actual_price=Product.base_price)
+    end
+
+    DealService->>PricingService: calculateTotal(items: DealItem[])
+    activate PricingService
+    PricingService-->>DealService: return total_amount = 5000
+    deactivate PricingService
+
+    DealService->>DealRepository: saveDealItems(deal_id, items: DealItem[])
+    activate DealRepository
+    DealRepository-->>DealService: return DealItem[] (deal_id, product_id, quantity, actual_price)
+    deactivate DealRepository
+
+    DealService->>DealRepository: updateDeal(deal_id, status='contract', total_amount=5000)
+    activate DealRepository
+    DealRepository-->>DealService: return Deal(id=deal_id, client_id, status='contract', total_amount=5000)
+    deactivate DealRepository
+
+    DealService->>EmailService: sendContractNotification(client_id, deal_id)
+    activate EmailService
+    EmailService-->>DealService: return notificationSent = true
+    deactivate EmailService
+
+    DealService-->>DealController: return Deal(id=deal_id, status='contract', total_amount=5000)
+    deactivate DealService
+
+    DealController-->>SalesManager: return 200 OK (Deal: deal_id, status='contract', total_amount=5000)
+    deactivate DealController
