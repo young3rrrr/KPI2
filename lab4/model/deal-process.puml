@@ -1,0 +1,82 @@
+@startuml
+title Бізнес-процес ведення комерційної угоди (Manage Deal Process)
+
+skinparam ActivityFontSize 13
+skinparam SwimlaneTitleFontSize 14
+skinparam ArrowFontSize 12
+skinparam ConditionStyle inside
+
+|Менеджер з продажу (SalesManager)|
+start
+:Відкриває угоду Deal та передає список товарів\nPOST /deals/{deal_id}/confirm (items);
+
+|Система OpenCRM (DealService & PricingService)|
+:Читання угоди через DealRepository.findById(deal_id);
+
+if (Угода вже закрита?\n(Deal.status == 'won' або 'lost')) then (так)
+  :Блокування змін закритої угоди;
+  |Менеджер з продажу (SalesManager)|
+  :Отримує відмову у зміні закритої угоди;
+  stop
+else (ні)
+endif
+
+|Система OpenCRM (DealService & PricingService)|
+:Перевірка списку позицій items та активності товарів\nчерез ProductRepository.findById(product_id);
+
+if (Список items не порожній\nта всі Product.is_active == true?) then (ні)
+  :Повернення доменної помилки\nEmptyDealItemsError або InactiveProductError\n(Deal залишається в status = 'new');
+  |Менеджер з продажу (SalesManager)|
+  :Отримує 400 Bad Request;
+  stop
+else (так)
+  |Система OpenCRM (DealService & PricingService)|
+  :Створення позицій DealItem\n(actual_price = Product.base_price);
+  :Розрахунок базової суми Deal.total_amount\nчерез PricingService.calculateTotal(items);
+endif
+
+|Менеджер з продажу (SalesManager)|
+if (Потрібна персональна знижка для VIP-угоди?) then (так)
+  :Вводить персональну знижку\nPATCH /deals/{deal_id}/discount (discount_percent);
+  
+  |Система OpenCRM (DealService & PricingService)|
+  :Перевірка умов VIP-знижки:\ntotal_amount >= 10000 та discount_percent <= 15;
+  
+  if (Ліміт знижки дотримано?\n(total_amount >= 10000 і discount_percent <= 15)) then (так)
+    :Пропорційне зменшення DealItem.actual_price\nта перерахунок Deal.total_amount\nчерез PricingService.applyDiscountToItems();
+    :Оновлення DealItem та Deal.total_amount у DealRepository;
+  else (ні, discount_percent > 15)
+    :Повернення ValidationError\n(перевищено ліміт знижки 15%);
+    |Менеджер з продажу (SalesManager)|
+    :Отримує 400 Bad Request (ValidationError);
+    stop
+  endif
+else (ні)
+endif
+
+|Система OpenCRM (DealService & PricingService)|
+fork
+  :Збереження позицій DealItem у DealRepository.saveDealItems();
+  :Оновлення угоди Deal (status = 'contract', total_amount)\nу DealRepository.updateDeal();
+  :Створення контрольного завдання менеджеру\nActivity (type = 'call', status = 'pending');
+fork again
+  :Надсилання сигналу\nsendContractNotification(client_id, deal_id); <<sendSignal>>
+  |Поштовий сервіс (EmailService)|
+  :Прийом події\nsendContractNotification(client_id, deal_id); <<acceptEvent>>
+  :Формування та відправка клієнту\nлиста із договором;
+end fork
+
+|Менеджер з продажу (SalesManager)|
+:Отримує підтвердження переходу угоди в status = 'contract'\n(200 OK) та результат розгляду договору клієнтом;
+
+if (Клієнт підписав договір?) then (так)
+  :Переводить угоду у фінальний статус\nDeal.status = 'won';
+else (ні)
+  :Переводить угоду у фінальний статус\nDeal.status = 'lost';
+endif
+
+|Система OpenCRM (DealService & PricingService)|
+:Фіксація фінального статусу Deal ('won' або 'lost')\nу DealRepository;
+
+stop
+@enduml
