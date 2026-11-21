@@ -48,8 +48,7 @@ if (Потрібна персональна знижка для VIP-угоди?)
   else (ні, discount_percent > 15)
     :Повернення ValidationError\n(перевищено ліміт знижки 15%);
     |Менеджер з продажу (SalesManager)|
-    :Отримує 400 Bad Request (ValidationError);
-    stop
+    :Отримує 400 Bad Request (ValidationError),\nугода зберігає попередню суму без знижки;
   endif
 else (ні)
 endif
@@ -58,18 +57,28 @@ endif
 fork
   :Збереження позицій DealItem у DealRepository.saveDealItems();
   :Оновлення угоди Deal (status = 'contract', total_amount)\nу DealRepository.updateDeal();
-  :Створення контрольного завдання менеджеру\nActivity (type = 'call', status = 'pending');
+  :Створення контрольного завдання менеджеру\nActivity (type = 'call', status = 'pending', due_date);
+  |Менеджер з продажу (SalesManager)|
+  :Отримує 200 OK (Deal.status = 'contract')\nбез очікування завершення доставки листа;
 fork again
-  :Надсилання сигналу\nsendContractNotification(client_id, deal_id); <<sendSignal>>
+  |Система OpenCRM (DealService & PricingService)|
+  :Надсилання асинхронного сигналу\nsendContractNotification(client_id, deal_id); <<sendSignal>>
   |Поштовий сервіс (EmailService)|
   :Прийом події\nsendContractNotification(client_id, deal_id); <<acceptEvent>>
   :Формування та відправка клієнту\nлиста із договором;
 end fork
 
 |Менеджер з продажу (SalesManager)|
-:Отримує підтвердження переходу угоди в status = 'contract'\n(200 OK) та результат розгляду договору клієнтом;
+if (Є відповідь клієнта на лист\nдо настання Activity.due_date?) then (так)
+  :Отримує відповідь клієнта щодо договору;
+else (ні, немає відповіді або лист не доставлено)
+  :Виконує ручний телефонний дзвінок клієнту\nза задачею Activity (type = 'call', due_date);
+  |Система OpenCRM (DealService & PricingService)|
+  :Оновлення статусу завдання\nActivity (type = 'call', status = 'completed');
+endif
 
-if (Клієнт підписав договір?) then (так)
+|Менеджер з продажу (SalesManager)|
+if (Клієнт погодив договір?) then (так)
   :Переводить угоду у фінальний статус\nDeal.status = 'won';
 else (ні)
   :Переводить угоду у фінальний статус\nDeal.status = 'lost';
