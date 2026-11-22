@@ -1,0 +1,126 @@
+@startuml
+title Компонентна діаграма архітектури системи OpenCRM (UML Component Diagram)
+
+top to bottom direction
+skinparam componentStyle uml2
+skinparam packageStyle rectangle
+skinparam defaultFontSize 12
+skinparam ArrowFontSize 11
+skinparam nodesep 60
+skinparam ranksep 50
+
+rectangle "Межа системи OpenCRM (OpenCRM System Boundary)" as SystemBoundary {
+
+  package "1. Клієнтський веб-інтерфейс (Web UI — React / Ant Design)" as UILayer {
+    component "Web UI (SPA)\n[React / Ant Design]\n---\n• Воронка угод (Kanban: UC-01, UC-05, UC-06)\n• Картки лідів і клієнтів (UC-02)\n• Каталог товарів (UC-03 — Admin)\n• Список активностей (UC-04)\n(Ролі: SalesManager, Admin)" as WebUI
+  }
+
+  interface "REST API (HTTPS / TLS 1.3)" as IRestAPI
+
+  package "2. Вхідний шар API (API Gateway & Controllers — Fastify)" as APILayer {
+    component "LeadClientController\n[Fastify]\n---\nРобота з лідами\nта клієнтами (UC-02)" as LeadClientController
+    component "ActivityController\n[Fastify]\n---\nЗадачі менеджера\n(UC-04)" as ActivityController
+    component "DealController\n[Fastify]\n---\nМаршрути угод і знижок\n(UC-01, UC-05, UC-06)" as DealController
+    component "CatalogController\n[Fastify]\n---\nКерування товарами\nдля Admin (UC-03)" as CatalogController
+  }
+
+  package "3. Сервісний шар бізнес-логіки (Business Services)" as ServiceLayer {
+    interface "ILeadClientService" as ILeadClientService
+    interface "IActivityService" as IActivityService
+    interface "IDealService" as IDealService
+    interface "IPricingService" as IPricingService
+    interface "IEmailService" as IEmailService
+
+    component "LeadClientService\n---\nКваліфікація та конвертація\nліда в клієнта 1:1 (UC-02)" as LeadClientService
+    component "ActivityService\n---\nСтворення та контроль\nвиконання завдань (UC-04)" as ActivityService
+    component "DealService\n---\nУправління життєвим циклом\nугоди та перевірка статусів\n(UC-01, UC-05)" as DealService
+    component "PricingService\n---\nРозрахунок вартості позицій\nDealItem та пропорційний\nперерахунок знижки (UC-06)" as PricingService
+    component "EmailService\n---\nВнутрішній модуль формування\nсповіщень про договори" as EmailService
+  }
+
+  package "4. Шар доступу до даних (Data Access Layer — Drizzle ORM)" as DALLayer {
+    interface "IClientLeadRepository" as IClientLeadRepo
+    interface "IActivityUserRepository" as IActivityUserRepo
+    interface "IDealRepository" as IDealRepo
+    interface "IProductRepository" as IProductRepo
+
+    component "ClientLeadRepository\n[Drizzle ORM]\n---\nТаблиці: Lead, Client" as ClientLeadRepository
+    component "ActivityUserRepository\n[Drizzle ORM]\n---\nТаблиці: Activity, User" as ActivityUserRepository
+    component "DealRepository\n[Drizzle ORM]\n---\nТаблиці: Deal, DealItem" as DealRepository
+    component "ProductRepository\n[Drizzle ORM]\n---\nТаблиця: Product" as ProductRepository
+  }
+
+  package "5. База даних (PostgreSQL 16+)" as DBLayer {
+    interface "SQL / Drizzle ORM" as ISQL
+    database "PostgreSQL 16+\n---\nРеляційне сховище даних (7 сутностей Лаб 1):\nUser, Lead, Client, Deal, DealItem, Product, Activity" as PostgresDB
+  }
+}
+
+interface "SMTP / TLS" as ISMTP
+component "Зовнішній поштовий шлюз\n(External SMTP Gateway)\n<<External System>>" as ExternalSMTP
+
+' Вирівнювання порядку компонентів у шарах для уникнення перетинів ліній
+LeadClientController -[hidden]right- ActivityController
+ActivityController -[hidden]right- DealController
+DealController -[hidden]right- CatalogController
+
+ILeadClientService -[hidden]right- IActivityService
+IActivityService -[hidden]right- IDealService
+IDealService -[hidden]right- IPricingService
+IPricingService -[hidden]right- IEmailService
+
+IClientLeadRepo -[hidden]right- IActivityUserRepo
+IActivityUserRepo -[hidden]right- IDealRepo
+IDealRepo -[hidden]right- IProductRepo
+
+' 1. Взаємодія клієнта та API
+WebUI --( IRestAPI : HTTPS (TLS 1.3)
+IRestAPI -- LeadClientController
+IRestAPI -- ActivityController
+IRestAPI -- DealController
+IRestAPI -- CatalogController
+
+' 2. Provided інтерфейси сервісів
+ILeadClientService -- LeadClientService
+IActivityService -- ActivityService
+IDealService -- DealService
+IPricingService -- PricingService
+IEmailService -- EmailService
+
+' Взаємодія контролерів та сервісів (Required інтерфейси)
+LeadClientController --( ILeadClientService : convertLead()
+ActivityController --( IActivityService : scheduleActivity()
+DealController --( IDealService : confirmDealContract()\napplyDiscount()
+DealController --( IPricingService : розрахунок знижки
+CatalogController --( IProductRepo : керування товарами (UC-03)
+
+' Координація між сервісами (Лаб 3, Лаб 4)
+DealService -up-( IActivityService : контрольна задача\n(type='call')
+DealService -up-( IPricingService : calculateTotal()\napplyDiscountToItems()
+DealService -up-( IEmailService : sendContractNotification()\n<<async>>
+
+' 3. Provided інтерфейси репозиторіїв
+IClientLeadRepo -- ClientLeadRepository
+IActivityUserRepo -- ActivityUserRepository
+IDealRepo -- DealRepository
+IProductRepo -- ProductRepository
+
+' Взаємодія сервісів та репозиторіїв (Required інтерфейси)
+LeadClientService --( IClientLeadRepo : CRUD Lead, Client
+ActivityService --( IActivityUserRepo : CRUD Activity, User
+DealService --( IDealRepo : CRUD Deal, DealItem
+DealService --( IProductRepo : перевірка Product.is_active
+PricingService --( IDealRepo : оновлення DealItem.actual_price
+
+' 4. Взаємодія репозиторіїв із БД PostgreSQL 16+
+ISQL -- PostgresDB
+ClientLeadRepository --( ISQL
+ActivityUserRepository --( ISQL
+DealRepository --( ISQL
+ProductRepository --( ISQL
+
+' 5. Зовнішня інтеграція з External SMTP Gateway
+ISMTP -- ExternalSMTP
+EmailService --( ISMTP : відправка листів\nіз договорами
+
+@enduml
